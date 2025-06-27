@@ -19,7 +19,8 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/Alert";
-import { Input } from "../components/ui/Input"; // For DataEntryScreen's textarea
+// The Input component is not used as textarea is directly used
+// import { Input } from "../components/ui/Input"; 
 
 // Import Lucide React icons
 import {
@@ -33,7 +34,7 @@ import {
   Upload,
   ArrowLeft,
   Loader2,
-  Download, // For loading spinners
+  Download,
 } from "lucide-react";
 
 // Utility function to combine class names
@@ -56,7 +57,7 @@ function DataEntryScreen({ selectedCompany, setStep }) {
   const [generationResult, setGenerationResult] = useState(null); // { success: boolean, message: string, downloadLink: string, errors: [] }
   const [downloadingTemplate, setDownloadingTemplate] = useState(false);
 
-  const handleDataPaste = (e) => {
+  const handleDataPaste = async (e) => {
     const data = e.target.value;
     setPastedData(data);
     setValidationResults(null); // Clear previous validation results
@@ -71,29 +72,26 @@ function DataEntryScreen({ selectedCompany, setStep }) {
             return;
         }
 
-        // Call the backend validation endpoint
-        const response = axios.post('http://localhost:3000/api/generate/validate-excel', {
+        const response = await axios.post('http://localhost:3000/api/generate/validate-excel', {
           companyId: selectedCompany.id,
-            pastedData: data,
+          pastedData: data,
         }, {
           headers: { 'Authorization': `Bearer ${token}` },
-        })
+        });
 
-        // Set validation results based on backend response
         setValidationResults({
           isValid: response.data.success,
           rowCount: response.data.rowCount,
           errors: response.data.errors || []
-      });
+        });
       } catch (err) {
         console.error("Error during data validation:", err);
-          // Handle validation errors returned by the backend
-          const errorData = err.response?.data;
-          setValidationResults({
-              isValid: false,
-              rowCount: 0,
-              errors: errorData?.errors || [errorData?.message || 'Erreur inconnue lors de la validation.']
-          });
+        const errorData = err.response?.data;
+        setValidationResults({
+            isValid: false,
+            rowCount: 0,
+            errors: errorData?.errors || [errorData?.message || 'Erreur inconnue lors de la validation.']
+        });
       } finally {
         setIsValidating(false); 
       }
@@ -102,6 +100,7 @@ function DataEntryScreen({ selectedCompany, setStep }) {
 
   const handleDownloadTemplate = async () => {
     setDownloadingTemplate(true);
+    setGenerationResult(null); // Clear any previous generation results
     try {
       const token = localStorage.getItem("token");
       if (!token) {
@@ -109,13 +108,11 @@ function DataEntryScreen({ selectedCompany, setStep }) {
         return;
       }
 
-      // Make GET request to the backend for the Excel template
       const response = await axios.get(`http://localhost:3000/api/generate/template?companyId=${selectedCompany.id}`, {
         headers: { 'Authorization': `Bearer ${token}` },
-        responseType: 'blob', // Important: to handle binary data (file download)
+        responseType: 'blob',
       });
 
-      // Create a URL for the blob and trigger download
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
@@ -123,25 +120,45 @@ function DataEntryScreen({ selectedCompany, setStep }) {
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(url); // Clean up the object URL
+      window.URL.revokeObjectURL(url);
+
+      // Optionally, show a success message for template download
+      setGenerationResult({ success: true, message: "Modèle Excel téléchargé avec succès!" });
 
     } catch (err) {
       console.error("Error downloading Excel template:", err);
-      // Provide user feedback for download error
-      setGenerationResult({
-          success: false,
-          message: err.response?.data?.message || 'Erreur lors du téléchargement du modèle Excel. Veuillez réessayer.'
-      });
+      let errorMessage = 'Erreur lors du téléchargement du modèle Excel. Veuillez réessayer.';
+      if (err.response && err.response.data) {
+        try {
+          // Attempt to read error message from blob if it's a text/json error
+          const errorBlob = new Blob([err.response.data], { type: 'application/json' });
+          const reader = new FileReader();
+          reader.onload = function() {
+            try {
+              const errorJson = JSON.parse(reader.result);
+              errorMessage = errorJson.message || errorMessage;
+            } catch (parseError) {
+              console.error("Failed to parse error response as JSON:", parseError);
+            }
+            setGenerationResult({ success: false, message: errorMessage });
+          };
+          reader.readAsText(errorBlob);
+        } catch (readError) {
+          console.error("Failed to read error blob:", readError);
+          setGenerationResult({ success: false, message: errorMessage });
+        }
+      } else {
+        setGenerationResult({ success: false, message: errorMessage });
+      }
     } finally {
       setDownloadingTemplate(false);
     }
-  }
+  };
 
   const handleGenerateXml = async () => {
     setGeneratingXml(true);
     setGenerationResult(null); // Clear previous results
 
-    // Placeholder for actual backend XML generation API call
     try {
       const token = localStorage.getItem("token");
       if (!token) {
@@ -149,16 +166,14 @@ function DataEntryScreen({ selectedCompany, setStep }) {
         return;
       }
 
-      // Send pastedData and SelectedCompany.id to backend for XML generation
       const response = await axios.post('http://localhost:3000/api/generate/xml', {
-            companyId: selectedCompany.id,
-            pastedData: pastedData,
+        companyId: selectedCompany.id,
+        pastedData: pastedData,
       }, {
-            headers: { 'Authorization': `Bearer ${token}` },
-            responseType: 'blob' // Expecting XML or ZIP file as response
+        headers: { 'Authorization': `Bearer ${token}` },
+        responseType: 'blob'
       });
       
-      // Assuming the backend returns a single XML file for now
       const contentDisposition = response.headers['content-disposition'];
       let fileName = `facture_${selectedCompany.name.replace(/\s/g, '_')}_${Date.now()}.xml`;
       if (contentDisposition) {
@@ -168,42 +183,40 @@ function DataEntryScreen({ selectedCompany, setStep }) {
         }
     }
 
-        const url = window.URL.createObjectURL(new Blob([response.data], { type: response.headers['content-type'] }));
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', fileName);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: response.headers['content-type'] }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', fileName);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
 
-        setGenerationResult({ success: true, message: "Fichier(s) XML généré(s) et téléchargé(s) avec succès !" });
+      setGenerationResult({ success: true, message: "Fichier(s) XML généré(s) et téléchargé(s) avec succès !" });
       
     } catch (err) {
       console.error("Error during XML generation:", err);
-        // Handle server-side validation errors from XML generation
-        let errorMessage = 'Une erreur inattendue est survenue lors de la génération XML.';
-        let errors = [];
+      let errorMessage = 'Une erreur inattendue est survenue lors de la génération XML.';
+      let errors = [];
 
-        if (err.response && err.response.data) {
-            // If the error response is a blob, try to read it as text/JSON
-            const reader = new FileReader();
-            reader.onload = function() {
-                try {
-                    const errorJson = JSON.parse(reader.result);
-                    errorMessage = errorJson.message || errorMessage;
-                    errors = errorJson.errors || [];
-                } catch (parseError) {
-                    // Fallback if parsing fails (e.g., non-JSON error response)
-                    errorMessage = reader.result.toString() || errorMessage;
-                    console.error("Failed to parse error response:", parseError);
-                }
-                setGenerationResult({ success: false, message: errorMessage, errors: errors });
-            };
-            reader.readAsText(err.response.data);
-        } else {
-             setGenerationResult({ success: false, message: err.message || errorMessage });
-        }
+      if (err.response && err.response.data) {
+          const reader = new FileReader();
+          reader.onload = function() {
+              try {
+                  const errorJson = JSON.parse(reader.result);
+                  errorMessage = errorJson.message || errorMessage;
+                  errors = errorJson.errors || [];
+              } catch (parseError) {
+                  // Fallback if parsing fails (e.g., non-JSON error response)
+                  errorMessage = reader.result.toString() || errorMessage;
+                  console.error("Failed to parse error response:", parseError);
+              }
+              setGenerationResult({ success: false, message: errorMessage, errors: errors });
+          };
+          reader.readAsText(err.response.data);
+      } else {
+            setGenerationResult({ success: false, message: err.message || errorMessage });
+      }
     } finally {
       setGeneratingXml(false);
     }
@@ -257,7 +270,7 @@ function DataEntryScreen({ selectedCompany, setStep }) {
               </p>
               <Button
                 className={cn(BUTTON_VARIANT_OUTLINE, BUTTON_SIZE_SM, "mt-2")}
-                onClick={() => handleDownloadTemplate()}
+                onClick={handleDownloadTemplate}
                 disabled={downloadingTemplate}
               >
                 {downloadingTemplate ? (
@@ -394,7 +407,7 @@ function DataEntryScreen({ selectedCompany, setStep }) {
           <AlertTitle>Génération XML réussie !</AlertTitle>
           <AlertDescription className="text-green-800">
             {generationResult.message}
-            {generationResult.downloadLink && (
+            {generationResult.downloadLink && ( // This downloadLink might not be directly used if the file downloads immediately
               <p className="mt-2">
                 <a
                   href={generationResult.downloadLink}
@@ -431,16 +444,15 @@ function DataEntryScreen({ selectedCompany, setStep }) {
 
 const GeneratePage = () => {
   const navigate = useNavigate();
-  const location = useLocation(); // To read query params
+  const location = useLocation();
   const [selectedCompanyId, setSelectedCompanyId] = useState("");
-  const [selectedCompanyDetails, setSelectedCompanyDetails] = useState(null); // Stores full company object
-  const [step, setStep] = useState(1); // 1: Select Company, 2: Data Entry
+  const [selectedCompanyDetails, setSelectedCompanyDetails] = useState(null);
+  const [step, setStep] = useState(1);
   const [companies, setCompanies] = useState([]);
   const [loadingCompanies, setLoadingCompanies] = useState(true);
   const [companiesError, setCompaniesError] = useState(null);
 
   useEffect(() => {
-    // Check if companyId is passed via URL query parameter (e.g., /generate?company=...)
     const queryParams = new URLSearchParams(location.search);
     const companyIdFromUrl = queryParams.get("company");
 
@@ -465,13 +477,12 @@ const GeneratePage = () => {
           name: company.name,
           taxId: company.tax_id,
           city: company.city,
-          address: company.address, // Added for pre-filling template
-          postal_code: company.postal_code, // Added for pre-filling template
-          country: company.country, // Added for pre-filling template
-          email: company.email, // Added for pre-filling template
-          phone: company.phone, // Added for pre-filling template
-          taxIdTypeCode: company.tax_id_type_code, // Added for pre-filling template
-          // Add other company details that might be needed for the template later
+          address: company.address,
+          postal_code: company.postal_code,
+          country: company.country,
+          email: company.email,
+          phone: company.phone,
+          taxIdTypeCode: company.tax_id_type_code,
         }));
         setCompanies(fetchedCompanies);
 
@@ -482,7 +493,7 @@ const GeneratePage = () => {
           if (preSelected) {
             setSelectedCompanyId(preSelected.id);
             setSelectedCompanyDetails(preSelected);
-            setStep(2); // Go directly to data entry if company selected from URL
+            setStep(2);
           }
         }
       } catch (err) {
@@ -494,7 +505,7 @@ const GeneratePage = () => {
         }
         setCompaniesError(
           err.response?.data?.message ||
-            "Erreur lors du chargement des entreprises."
+            "Erreur lors du chargement des entreprises. Veuillez réessayer."
         );
       } finally {
         setLoadingCompanies(false);
@@ -516,7 +527,6 @@ const GeneratePage = () => {
     }
   };
 
-  // Render loading state for companies
   if (loadingCompanies) {
     return (
       <div className="flex justify-center items-center h-full min-h-[400px]">
@@ -526,7 +536,6 @@ const GeneratePage = () => {
     );
   }
 
-  // Render DataEntryScreen if step is 2
   if (step === 2) {
     return (
       <DataEntryScreen
@@ -536,10 +545,8 @@ const GeneratePage = () => {
     );
   }
 
-  // Render initial company selection screen
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      {/* Header */}
       <div className="text-center">
           <h1 className="text-3xl font-bold text-gray-900">Générer des factures XML</h1>
           <p className="text-gray-600 mt-2">
@@ -547,7 +554,6 @@ const GeneratePage = () => {
           </p>
         </div>
 
-        {/* Company Selection */}
         <Card>
         <CardHeader>
             <CardTitle className="flex items-center">
@@ -629,7 +635,6 @@ const GeneratePage = () => {
           </CardContent>
         </Card>
 
-        {/* Instructions */}
         <Card className="max-w-2xl mx-auto">
         <CardHeader>
             <CardTitle className="text-lg">Prochaines étapes</CardTitle>
