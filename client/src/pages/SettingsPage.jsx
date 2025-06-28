@@ -570,16 +570,6 @@ const SettingsPage = () => {
           </CardHeader>
           <CardContent>
           <div className="space-y-4">
-          <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
-                <div>
-                  <h4 className="font-medium text-gray-900">Exporter mes données</h4>
-                  <p className="text-sm text-gray-600">Téléchargez une copie de toutes vos données</p>
-                </div>
-                <Button className={cn(BUTTON_VARIANT_OUTLINE,BUTTON_SIZE_DEFAULT)} onClick={() => alert("Fonctionnalité d'exportation de données à implémenter.")}> {/* TODO: make the download data function */}
-                  Exporter
-                </Button>
-              </div>
-
               <div className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
                 <div>
                   <h4 className="font-medium text-gray-900">Supprimer mon compte</h4>

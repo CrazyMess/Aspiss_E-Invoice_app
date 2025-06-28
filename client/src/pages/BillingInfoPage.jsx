@@ -1,3 +1,4 @@
+// BillingInfoPage.jsx
 import React, { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -13,14 +14,14 @@ import {
 } from "../components/ui/Card";
 import { Input } from "../components/ui/Input";
 import { Label } from "../components/ui/Label";
-import { Alert, AlertDescription, AlertTitle } from "../components/ui/Alert"; // Import AlertTitle
+import { Alert, AlertDescription, AlertTitle } from "../components/ui/Alert";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../components/ui/Select";
+} from "../components/ui/select.jsx";
 
 // Importing the necessary icons
 import {
@@ -45,6 +46,7 @@ const BillingInfoPage = () => {
   const [formData, setFormData] = useState({
     billingEntityName: "",
     billingTaxId: "",
+    billingTaxIdType: "I-01", // Default to Tunisian Fiscal ID
     address: "",
     city: "",
     postalCode: "",
@@ -56,6 +58,7 @@ const BillingInfoPage = () => {
   const [submitStatus, setSubmitStatus] = useState("idle"); // "idle" | "success" | "error"
   const [errors, setErrors] = useState({}); // Client-side validation errors
   const [apiError, setApiError] = useState(null); // Backend API errors
+  const [taxIdTypes, setTaxIdTypes] = useState([]); // State for fetched tax ID types
 
   const countries = [
     { value: "Tunisia", label: "Tunisie" },
@@ -67,15 +70,16 @@ const BillingInfoPage = () => {
   ];
 
   useEffect(() => {
-    // Fetch existing billing info on component mount
-    const fetchBillingInfo = async () => {
+    const fetchInitialData = async () => {
       const token = localStorage.getItem("token");
       if (!token) {
         navigate("/login"); // Redirect if not authenticated
         return;
       }
+
       try {
-        const response = await axios.get(
+        // Fetch billing info
+        const billingInfoResponse = await axios.get(
           "http://localhost:3000/api/user/billing-info",
           {
             headers: {
@@ -83,21 +87,28 @@ const BillingInfoPage = () => {
             },
           }
         );
-        const billingInfo = response.data.billingInfo;
+        const billingInfo = billingInfoResponse.data.billingInfo;
         setFormData({
           billingEntityName: billingInfo.billing_entity_name || "",
           billingTaxId: billingInfo.billing_tax_id || "",
+          billingTaxIdType: billingInfo.billing_tax_id_type || "I-01", // Default or fetched
           address: billingInfo.address || "",
           city: billingInfo.city || "",
           postalCode: billingInfo.postal_code || "",
           country: billingInfo.country || "Tunisia",
         });
         setIsEditMode(true); // Billing info exists, so we are in edit mode
+
+        // Fetch tax ID types lookup (can be done concurrently or sequentially)
+        const taxIdTypesResponse = await axios.get(
+          "http://localhost:3000/api/lookups/partner-identifier-types" // Assuming this endpoint exists
+        );
+        setTaxIdTypes(taxIdTypesResponse.data);
+
       } catch (err) {
-        // If 404, it means no billing info exists, so stay in create mode
         if (err.response && err.response.status === 404) {
-          setIsEditMode(false);
-        } else if (err.response && err.response.stutus === 401) {
+          setIsEditMode(false); // No billing info found, stay in create mode
+        } else if (err.response && err.response.status === 401) {
           navigate("/login"); // Token invalid or expired
         } else {
           setApiError(
@@ -105,17 +116,27 @@ const BillingInfoPage = () => {
               "Erreur lors du chargement des informations de facturation."
           );
         }
+        // Still try to fetch taxIdTypes even if billing info fetch fails
+        try {
+            const taxIdTypesResponse = await axios.get(
+                "http://localhost:3000/api/lookups/partner-identifier-types"
+            );
+            setTaxIdTypes(taxIdTypesResponse.data);
+        } catch (lookupErr) {
+            console.error("Error fetching tax ID types:", lookupErr);
+            setApiError(prev => prev + " Erreur lors du chargement des types d'identifiants fiscaux.");
+        }
       } finally {
         setIsLoading(false);
       }
     };
 
-    fetchBillingInfo();
+    fetchInitialData();
   }, [navigate]);
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-    // Clear error when user starts typing
+    // Clear error when user starts typing for that specific field
     if (errors[field]) {
       setErrors((prev) => ({ ...prev, [field]: "" }));
     }
@@ -127,21 +148,79 @@ const BillingInfoPage = () => {
     const newErrors = {};
 
     if (!formData.billingEntityName.trim()) {
-      newErrors.billingEntityName =
-        "Le nom de l'entité de facturation est requis";
+      newErrors.billingEntityName = "Le nom de l'entité de facturation est requis.";
+    } else if (formData.billingEntityName.trim().length > 200) {
+      newErrors.billingEntityName = "Le nom ne doit pas dépasser 200 caractères.";
     }
+
     if (!formData.address.trim()) {
-      newErrors.address = "L'adresse est requise";
+      newErrors.address = "L'adresse est requise.";
+    } else if (formData.address.trim().length > 500) {
+      newErrors.address = "L'adresse ne doit pas dépasser 500 caractères.";
     }
+
     if (!formData.city.trim()) {
-      newErrors.city = "La ville est requise";
+      newErrors.city = "La ville est requise.";
     }
+
     if (!formData.postalCode.trim()) {
-      newErrors.postalCode = "Le code postal est requis";
+      newErrors.postalCode = "Le code postal est requis.";
+    } else if (!/^\d{4,17}$/.test(formData.postalCode.trim())) { // Basic numeric, max 17 digits
+        newErrors.postalCode = "Le code postal doit être numérique et valide (max 17 chiffres).";
     }
+
     if (!formData.country) {
-      newErrors.country = "Le pays est requis";
+      newErrors.country = "Le pays est requis.";
     }
+
+    // Validate billingTaxId and billingTaxIdType only if one is provided
+    if (formData.billingTaxId.trim() || formData.billingTaxIdType.trim()) {
+        if (!formData.billingTaxId.trim()) {
+            newErrors.billingTaxId = "Le numéro d'identification fiscale est requis si un type est sélectionné.";
+        }
+        if (!formData.billingTaxIdType.trim()) {
+            newErrors.billingTaxIdType = "Le type d'identification fiscale est requis si un numéro est fourni.";
+        }
+
+        // Specific regex validation based on type, align with backend rules
+        if (formData.billingTaxId.trim() && formData.billingTaxIdType.trim()) {
+            const taxIdValue = formData.billingTaxId.trim();
+            const taxIdType = formData.billingTaxIdType.trim();
+
+            switch (taxIdType) {
+                case 'I-01': // Tunisian Fiscal ID (Matricule Fiscal)
+                    // Allows 7 digits + letter + 3 digits (e.g., 1234567A001) or 7-13 digits
+                    if (!/^(?:[0-9]{7}[A-Z][0-9]{3}|[0-9]{7,13})$/i.test(taxIdValue)) {
+                        newErrors.billingTaxId = "Format MF tunisien invalide. Attendu: 7 chiffres + 1 lettre + 3 chiffres (Ex: 1234567A001) OU 7 à 13 chiffres.";
+                    } else if (taxIdValue.length > 35) { // Max length for XML
+                        newErrors.billingTaxId = "Le numéro d'identification fiscale ne doit pas dépasser 35 caractères.";
+                    }
+                    break;
+                case 'I-02': // CIN
+                    if (!/^[0-9]{8}$/.test(taxIdValue)) {
+                        newErrors.billingTaxId = "Le CIN doit être composé de 8 chiffres.";
+                    } else if (taxIdValue.length > 35) {
+                         newErrors.billingTaxId = "Le numéro d'identification fiscale ne doit pas dépasser 35 caractères.";
+                    }
+                    break;
+                case 'I-03': // Carte de séjour
+                    if (!/^[0-9]{9}$/.test(taxIdValue)) {
+                        newErrors.billingTaxId = "La Carte de Séjour doit être composée de 9 chiffres.";
+                    } else if (taxIdValue.length > 35) {
+                        newErrors.billingTaxId = "Le numéro d'identification fiscale ne doit pas dépasser 35 caractères.";
+                    }
+                    break;
+                // Add more cases for other tax ID types if necessary (e.g., I-04 for non-Tunisian MF)
+                default:
+                    // Generic max length check for unknown types, or add specific rules if needed
+                    if (taxIdValue.length > 35) {
+                        newErrors.billingTaxId = "Le numéro d'identification fiscale ne doit pas dépasser 35 caractères.";
+                    }
+                    break;
+            }
+        }
+    }
+
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0; // Return true if no errors
@@ -169,11 +248,12 @@ const BillingInfoPage = () => {
       let response;
       const apiUrl = "http://localhost:3000/api/user/billing-info";
       const payload = {
-        billingEntityName: formData.billingEntityName,
-        billingTaxId: formData.billingTaxId,
+        billing_entity_name: formData.billingEntityName, // Match backend field names
+        billing_tax_id: formData.billingTaxId, // Match backend field names
+        billing_tax_id_type: formData.billingTaxIdType, // Match backend field names
         address: formData.address,
         city: formData.city,
-        postalCode: formData.postalCode,
+        postal_code: formData.postalCode,
         country: formData.country,
       };
 
@@ -189,21 +269,23 @@ const BillingInfoPage = () => {
             Authorization: `Bearer ${token}`,
           },
         });
+        setIsEditMode(true); // After a successful POST, switch to edit mode
       }
 
       setSubmitStatus("success");
       console.log("Billing info submitted successfully:", response.data);
-
-      // After success, we might want to update the user info in local storage
-      // This is a simplified approach; in a real app, you might re-fetch user data.
-      // TODO: re-fetch user data and update local storage
-      const currentUser = JSON.parse(localStorage.getItem("user"));
-      if (currentUser) {
-        localStorage.setItem(
-          "user",
-          JSON.stringify({ ...currentUser, hasBillingInfo: true })
-        );
-      }
+      try {
+        const userResponse = await axios.get("http://localhost:3000/api/user/billing-info", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        localStorage.setItem("user", JSON.stringify(userResponse.data.user));
+        console.log("User data re-fetched and local storage updated.");
+      } catch (userFetchError) {
+        console.error("Failed to re-fetch user data:", userFetchError);
+        // This is not critical for billing info submission success, but log it
+      } 
 
       setTimeout(() => {
         navigate("/subscription"); // Redirect to subscription page after success
@@ -253,8 +335,8 @@ const BillingInfoPage = () => {
         <Shield className="h-4 w-4 text-blue-600" />
         <AlertDescription className="text-blue-800">
           <strong>Sécurité garantie:</strong> Toutes vos informations de
-          facturation sont chiffrées et sécurisées selon les standards
-          bancaires.
+          facturation et d'identification fiscale sont chiffrées et sécurisées
+          selon les standards bancaires.
         </AlertDescription>
       </Alert>
 
@@ -325,33 +407,66 @@ const BillingInfoPage = () => {
               )}
             </div>
 
-            {/* Tax ID (Optional) */}
-            <div>
-              <Label htmlFor="billingTaxId">
-                Numéro d'identification fiscale (Optionnel)
-              </Label>
-              <Input
-                id="billingTaxId"
-                value={formData.billingTaxId}
-                onChange={(e) =>
-                  handleInputChange("billingTaxId", e.target.value)
-                }
-                placeholder="Numéro fiscal de votre entreprise"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Requis uniquement pour les entreprises soumises à la TVA
-              </p>
+            {/* Tax ID and Tax ID Type */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <Label htmlFor="billingTaxIdType">Type d'identification fiscale (Optionnel)</Label>
+                <Select
+                  value={formData.billingTaxIdType}
+                  onValueChange={(value) => handleInputChange("billingTaxIdType", value)}
+                >
+                  <SelectTrigger
+                    className={errors.billingTaxIdType ? "border-red-500" : ""}
+                  >
+                    <SelectValue placeholder="Sélectionnez un type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {taxIdTypes.map((type) => (
+                      <SelectItem key={type.code} value={type.code}>
+                        {type.code}: {type.description}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {errors.billingTaxIdType && (
+                  <p className="text-sm text-red-600 mt-1">
+                    {errors.billingTaxIdType}
+                  </p>
+                )}
+              </div>
+              <div>
+                <Label htmlFor="billingTaxId">
+                  Numéro d'identification fiscale (Optionnel)
+                </Label>
+                <Input
+                  id="billingTaxId"
+                  value={formData.billingTaxId}
+                  onChange={(e) =>
+                    handleInputChange("billingTaxId", e.target.value)
+                  }
+                  className={errors.billingTaxId ? "border-red-500" : ""}
+                  placeholder="Numéro fiscal de votre entreprise ou CIN"
+                />
+                {errors.billingTaxId && (
+                  <p className="text-sm text-red-600 mt-1">
+                    {errors.billingTaxId}
+                  </p>
+                )}
+                <p className="text-xs text-gray-500 mt-1">
+                  Requis si vous avez un numéro d'identification fiscale pour la facturation.
+                </p>
+              </div>
             </div>
 
             {/* Address */}
             <div>
               <Label htmlFor="address">Adresse *</Label>
-              <Input // Using Input for now as V0 had 'text' input. Change to textarea for multiline if needed.
+              <Input // Consider changing to textarea if multiline addresses are common
                 id="address"
                 value={formData.address}
                 onChange={(e) => handleInputChange("address", e.target.value)}
                 className={errors.address ? "border-red-500" : ""}
-                placeholder="Adresse complète"
+                placeholder="Adresse complète (ex: Rue Principale, Appart 123)"
                 required
               />
               {errors.address && (
@@ -482,7 +597,6 @@ const BillingInfoPage = () => {
           </div>
         </CardContent>
       </Card>
-
     </div>
   );
 };

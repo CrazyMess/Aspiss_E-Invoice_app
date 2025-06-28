@@ -84,7 +84,7 @@ function App() {
             path="/companies"
             element={
               <DashboardLayout userFullName={currentUserFullName}>
-                <CompaniesPage /> {/* TODO: make companies page */}
+                <CompaniesPage /> 
               </DashboardLayout>
             }
           />
